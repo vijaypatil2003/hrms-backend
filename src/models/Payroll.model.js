@@ -1,10 +1,13 @@
-
-
 const mongoose = require("mongoose");
 
 const payrollSchema = new mongoose.Schema(
   {
-    employee: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    employee: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      index: true,
+    },
     month: { type: Number, required: true },
     year: { type: Number, required: true },
     grossSalary: { type: Number, required: true },
@@ -13,10 +16,17 @@ const payrollSchema = new mongoose.Schema(
     unpaidLeaveDays: { type: Number, default: 0 },
     absentDays: { type: Number, default: 0 },
     lateMarkDeductionDays: { type: Number, default: 0 },
+    leaveBreakdown: [
+      {
+        leaveType: { type: String },
+        days: { type: Number },
+      },
+    ],
+    paidDays: { type: Number, default: 0 },
     totalDeduction: { type: Number, default: 0 },
     netSalary: { type: Number, required: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 payrollSchema.index({ employee: 1, month: 1, year: 1 }, { unique: true });

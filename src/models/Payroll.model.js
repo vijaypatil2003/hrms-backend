@@ -23,6 +23,8 @@ const payrollSchema = new mongoose.Schema(
       },
     ],
     paidDays: { type: Number, default: 0 },
+    salaryDeductionDays: { type: Number, default: 0 },
+    leaveBalanceCovered: { type: Number, default: 0 },
     totalDeduction: { type: Number, default: 0 },
     netSalary: { type: Number, required: true },
   },

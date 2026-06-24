@@ -21,6 +21,50 @@ const applyLeave = async (req, res) => {
         .json({ message: "leaveType, fromDate and toDate are required" });
     }
 
+    const days = isHalfDay
+      ? 0.5
+      : (new Date(toDate) - new Date(fromDate)) / (1000 * 60 * 60 * 24) + 1;
+
+    if (leaveType !== "Unpaid Leave") {
+      const user = await User.findById(req.user._id);
+      const policy = await LeavePolicy.find({
+        employmentType: user.employmentType,
+        leaveType,
+      });
+
+      const allotted = policy.reduce((sum, p) => sum + p.annualDays, 0);
+
+      const yearStart = new Date(new Date().getFullYear(), 0, 1);
+      const usedLeaves = await LeaveRequest.find({
+        employee: req.user._id,
+        leaveType,
+        status: "approved",
+        fromDate: { $gte: yearStart },
+      });
+
+      const used = usedLeaves.reduce(
+        (sum, l) =>
+          sum +
+          (l.manualDays ??
+            (l.isHalfDay
+              ? 0.5
+              : (new Date(l.toDate) - new Date(l.fromDate)) /
+                  (1000 * 60 * 60 * 24) +
+                1)),
+        0,
+      );
+
+      const remaining = allotted - used;
+
+      if (days > remaining) {
+        return res
+          .status(400)
+          .json({
+            message: `Insufficient leave balance. Remaining ${leaveType}: ${remaining} days`,
+          });
+      }
+    }
+
     const leave = await LeaveRequest.create({
       employee: req.user._id,
       leaveType,

@@ -31,6 +31,7 @@ const getWorkingDays = async (month, year) => {
 
 const runPayroll = async (req, res) => {
   try {
+    console.log("NEW PAYROLL CODE RUNNING");
     const { employeeId, month, year } = req.body;
     if (!employeeId || !month || !year) {
       return res
@@ -58,25 +59,35 @@ const runPayroll = async (req, res) => {
     const perDaySalary = employee.salary / workingDays;
 
     const monthStart = new Date(year, month - 1, 1);
-    const monthEnd = new Date(
-      year,
-      month - 1,
-      workingDays === 0 ? 1 : new Date(year, month, 0).getDate(),
-    );
+    const monthEnd = new Date(year, month, 0);
 
+    // Present days — distinct dates only (multiple punches per day)
     const attendanceLogs = await AttendanceLog.find({
       employee: employeeId,
       date: { $gte: monthStart, $lte: monthEnd },
     });
 
-    const lateMarks = attendanceLogs.filter((log) => log.isLate).length;
+    const uniquePresentDates = new Set(
+      attendanceLogs.map((log) => new Date(log.date).toDateString()),
+    );
+    const daysWithAttendance = uniquePresentDates.size;
+
+    // Late marks — max 1 per day
+    const lateDaySet = new Set();
+    attendanceLogs.forEach((log) => {
+      if (log.isLate) lateDaySet.add(new Date(log.date).toDateString());
+    });
+    const lateMarks = lateDaySet.size;
     const lateMarkDeductionDays = Math.floor(lateMarks / 3) * 0.5;
 
+    // Approved leaves overlapping this month
     const approvedLeaves = await LeaveRequest.find({
       employee: employeeId,
       status: "approved",
-      fromDate: { $gte: monthStart, $lte: monthEnd },
+      fromDate: { $lte: monthEnd },
+      toDate: { $gte: monthStart },
     });
+    console.log("approvedLeaves", approvedLeaves);
 
     let paidLeaveUsed = 0;
     let unpaidLeaveDays = 0;
@@ -88,6 +99,7 @@ const runPayroll = async (req, res) => {
         : (new Date(leave.toDate) - new Date(leave.fromDate)) /
             (1000 * 60 * 60 * 24) +
           1;
+
       if (leave.leaveType === "Unpaid Leave") {
         unpaidLeaveDays += days;
       } else {
@@ -102,53 +114,21 @@ const runPayroll = async (req, res) => {
       days: leaveBreakdownMap[leaveType],
     }));
 
-    const daysWithAttendance = attendanceLogs.length;
     const totalLeaveDaysTaken = paidLeaveUsed + unpaidLeaveDays;
     const presentOrLeaveDays = daysWithAttendance + totalLeaveDaysTaken;
     const absentDays = Math.max(workingDays - presentOrLeaveDays, 0);
 
-    const policies = await LeavePolicy.find({
-      employmentType: employee.employmentType,
-    });
-    const paidLeaveAllotted = policies
-      .filter((p) => p.leaveType !== "Unpaid Leave")
-      .reduce((sum, p) => sum + p.annualDays, 0);
-
-    const yearStart = new Date(year, 0, 1);
-    const yearToDateLeaves = await LeaveRequest.find({
-      employee: employeeId,
-      status: "approved",
-      leaveType: { $ne: "Unpaid Leave" },
-      fromDate: { $gte: yearStart, $lte: monthEnd },
-    });
-
-    const paidLeaveUsedYTD = yearToDateLeaves.reduce((sum, leave) => {
-      const days = leave.isHalfDay
-        ? 0.5
-        : (new Date(leave.toDate) - new Date(leave.fromDate)) /
-            (1000 * 60 * 60 * 24) +
-          1;
-      return sum + days;
-    }, 0);
-
-    const paidLeaveRemaining = paidLeaveAllotted - paidLeaveUsedYTD;
-
-    const deductionDaysNeeded =
-      absentDays + lateMarkDeductionDays + unpaidLeaveDays;
+    // Deduction = absent + late + unpaid only
+    // Paid approved leaves don't cause deduction (employee applied and got approved)
+    // Absent days are NOT auto-covered by leave balance — straight cut
     const salaryDeductionDays =
-      paidLeaveRemaining >= deductionDaysNeeded
-        ? 0
-        : deductionDaysNeeded - paidLeaveRemaining;
+      absentDays + lateMarkDeductionDays + unpaidLeaveDays;
 
     const totalDeduction =
       Math.round(salaryDeductionDays * perDaySalary * 100) / 100;
     const netSalary =
       Math.round((employee.salary - totalDeduction) * 100) / 100;
     const paidDays = workingDays - salaryDeductionDays;
-    const leaveBalanceCovered = Math.max(
-      Math.min(paidLeaveRemaining, deductionDaysNeeded),
-      0,
-    );
 
     const payroll = await Payroll.create({
       employee: employeeId,
@@ -164,7 +144,7 @@ const runPayroll = async (req, res) => {
       leaveBreakdown,
       paidDays,
       salaryDeductionDays,
-      leaveBalanceCovered,
+      leaveBalanceCovered: 0,
       totalDeduction,
       netSalary,
     });
@@ -174,6 +154,335 @@ const runPayroll = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
+// const runPayroll = async (req, res) => {
+//   try {
+//     const { employeeId, month, year } = req.body;
+//     if (!employeeId || !month || !year) {
+//       return res
+//         .status(400)
+//         .json({ message: "employeeId, month and year are required" });
+//     }
+
+//     const existing = await Payroll.findOne({
+//       employee: employeeId,
+//       month,
+//       year,
+//     });
+//     if (existing) {
+//       return res
+//         .status(400)
+//         .json({ message: "Payroll already processed for this month" });
+//     }
+
+//     const employee = await User.findById(employeeId);
+//     if (!employee) {
+//       return res.status(404).json({ message: "Employee not found" });
+//     }
+
+//     const workingDays = await getWorkingDays(month, year);
+//     const perDaySalary = employee.salary / workingDays;
+
+//     // FIX 1: monthEnd = actual last calendar day, not based on workingDays
+//     const monthStart = new Date(year, month - 1, 1);
+//     const monthEnd = new Date(year, month, 0); // last day of month
+
+//     // FIX 2: present days = distinct dates with attendance, not total log docs
+//     const attendanceLogs = await AttendanceLog.find({
+//       employee: employeeId,
+//       date: { $gte: monthStart, $lte: monthEnd },
+//     });
+
+//     const uniquePresentDates = new Set(
+//       attendanceLogs.map((log) => new Date(log.date).toDateString()),
+//     );
+//     const daysWithAttendance = uniquePresentDates.size;
+
+//     // Late marks — one per day max (group by date, take worst)
+//     const lateLogsByDate = {};
+//     attendanceLogs.forEach((log) => {
+//       const dateStr = new Date(log.date).toDateString();
+//       if (log.isLate) lateLogsByDate[dateStr] = true;
+//     });
+//     const lateMarks = Object.keys(lateLogsByDate).length;
+//     const lateMarkDeductionDays = Math.floor(lateMarks / 3) * 0.5;
+
+//     // Approved leaves that overlap with this month
+//     const approvedLeaves = await LeaveRequest.find({
+//       employee: employeeId,
+//       status: "approved",
+//       fromDate: { $lte: monthEnd },
+//       toDate: { $gte: monthStart },
+//     });
+
+//     let paidLeaveUsed = 0;
+//     let unpaidLeaveDays = 0;
+//     const leaveBreakdownMap = {};
+
+//     approvedLeaves.forEach((leave) => {
+//       const days = leave.isHalfDay
+//         ? 0.5
+//         : (new Date(leave.toDate) - new Date(leave.fromDate)) /
+//             (1000 * 60 * 60 * 24) +
+//           1;
+
+//       if (leave.leaveType === "Unpaid Leave") {
+//         unpaidLeaveDays += days;
+//       } else {
+//         paidLeaveUsed += days;
+//       }
+//       leaveBreakdownMap[leave.leaveType] =
+//         (leaveBreakdownMap[leave.leaveType] || 0) + days;
+//     });
+
+//     const leaveBreakdown = Object.keys(leaveBreakdownMap).map((leaveType) => ({
+//       leaveType,
+//       days: leaveBreakdownMap[leaveType],
+//     }));
+
+//     const totalLeaveDaysTaken = paidLeaveUsed + unpaidLeaveDays;
+//     const presentOrLeaveDays = daysWithAttendance + totalLeaveDaysTaken;
+//     const absentDays = Math.max(workingDays - presentOrLeaveDays, 0);
+
+//     // Annual leave quota for this employment type
+//     const policies = await LeavePolicy.find({
+//       employmentType: employee.employmentType,
+//     });
+//     const paidLeaveAllotted = policies
+//       .filter((p) => p.leaveType !== "Unpaid Leave")
+//       .reduce((sum, p) => sum + p.annualDays, 0);
+
+//     // FIX 3: YTD paid leave used BEFORE this month (not including current month)
+//     // So balance = what was remaining entering this month
+//     const yearStart = new Date(year, 0, 1);
+//     const prevMonthEnd = new Date(year, month - 1, 0); // last day of previous month
+
+//     const yearToDateLeaves = await LeaveRequest.find({
+//       employee: employeeId,
+//       status: "approved",
+//       leaveType: { $ne: "Unpaid Leave" },
+//       fromDate: { $gte: yearStart, $lte: prevMonthEnd },
+//     });
+
+//     const paidLeaveUsedBeforeThisMonth = yearToDateLeaves.reduce(
+//       (sum, leave) => {
+//         const days = leave.isHalfDay
+//           ? 0.5
+//           : (new Date(leave.toDate) - new Date(leave.fromDate)) /
+//               (1000 * 60 * 60 * 24) +
+//             1;
+//         return sum + days;
+//       },
+//       0,
+//     );
+
+//     // Balance entering this month
+//     const paidLeaveBalanceEntering = Math.max(
+//       paidLeaveAllotted - paidLeaveUsedBeforeThisMonth,
+//       0,
+//     );
+
+//     // Deductions needed this month
+//     const deductionDaysNeeded =
+//       absentDays + lateMarkDeductionDays + unpaidLeaveDays;
+
+//     // How much of deduction can be covered by remaining paid leave balance
+//     const leaveBalanceCovered = 0
+//     // const leaveBalanceCovered = Math.min(
+//     //   paidLeaveBalanceEntering,
+//     //   deductionDaysNeeded,
+//     // );
+
+//     // Only this much actually hits salary
+//     const salaryDeductionDays =
+//       absentDays + lateMarkDeductionDays + unpaidLeaveDays;
+
+//     // const salaryDeductionDays = Math.max(
+//     //   deductionDaysNeeded - leaveBalanceCovered,
+//     //   0,
+//     // );
+
+//     // const totalDeduction =
+//     //   Math.round(salaryDeductionDays * perDaySalary * 100) / 100;
+//     // const netSalary =
+//     //   Math.round((employee.salary - totalDeduction) * 100) / 100;
+//     // const paidDays = workingDays - salaryDeductionDays;
+
+//     const totalDeduction =
+//       Math.round(salaryDeductionDays * perDaySalary * 100) / 100;
+//     const netSalary =
+//       Math.round((employee.salary - totalDeduction) * 100) / 100;
+//     const paidDays = workingDays - salaryDeductionDays;
+//     const payroll = await Payroll.create({
+//       employee: employeeId,
+//       month,
+//       year,
+//       grossSalary: employee.salary,
+//       workingDays,
+//       paidLeaveUsed,
+//       unpaidLeaveDays,
+//       absentDays,
+//       presentDays: daysWithAttendance,
+//       lateMarkDeductionDays,
+//       leaveBreakdown,
+//       paidDays,
+//       salaryDeductionDays,
+//       leaveBalanceCovered,
+//       totalDeduction,
+//       netSalary,
+//     });
+
+//     res.status(201).json(payroll);
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
+
+// ==========================================================
+// const runPayroll = async (req, res) => {
+//   try {
+//     const { employeeId, month, year } = req.body;
+//     if (!employeeId || !month || !year) {
+//       return res
+//         .status(400)
+//         .json({ message: "employeeId, month and year are required" });
+//     }
+
+//     const existing = await Payroll.findOne({
+//       employee: employeeId,
+//       month,
+//       year,
+//     });
+//     if (existing) {
+//       return res
+//         .status(400)
+//         .json({ message: "Payroll already processed for this month" });
+//     }
+
+//     const employee = await User.findById(employeeId);
+//     if (!employee) {
+//       return res.status(404).json({ message: "Employee not found" });
+//     }
+
+//     const workingDays = await getWorkingDays(month, year);
+//     const perDaySalary = employee.salary / workingDays;
+
+//     const monthStart = new Date(year, month - 1, 1);
+//     const monthEnd = new Date(
+//       year,
+//       month - 1,
+//       workingDays === 0 ? 1 : new Date(year, month, 0).getDate(),
+//     );
+
+//     const attendanceLogs = await AttendanceLog.find({
+//       employee: employeeId,
+//       date: { $gte: monthStart, $lte: monthEnd },
+//     });
+
+//     const lateMarks = attendanceLogs.filter((log) => log.isLate).length;
+//     const lateMarkDeductionDays = Math.floor(lateMarks / 3) * 0.5;
+
+//     const approvedLeaves = await LeaveRequest.find({
+//       employee: employeeId,
+//       status: "approved",
+//       fromDate: { $gte: monthStart, $lte: monthEnd },
+//     });
+
+//     let paidLeaveUsed = 0;
+//     let unpaidLeaveDays = 0;
+//     const leaveBreakdownMap = {};
+
+//     approvedLeaves.forEach((leave) => {
+//       const days = leave.isHalfDay
+//         ? 0.5
+//         : (new Date(leave.toDate) - new Date(leave.fromDate)) /
+//             (1000 * 60 * 60 * 24) +
+//           1;
+//       if (leave.leaveType === "Unpaid Leave") {
+//         unpaidLeaveDays += days;
+//       } else {
+//         paidLeaveUsed += days;
+//       }
+//       leaveBreakdownMap[leave.leaveType] =
+//         (leaveBreakdownMap[leave.leaveType] || 0) + days;
+//     });
+
+//     const leaveBreakdown = Object.keys(leaveBreakdownMap).map((leaveType) => ({
+//       leaveType,
+//       days: leaveBreakdownMap[leaveType],
+//     }));
+
+//     const daysWithAttendance = attendanceLogs.length;
+//     const totalLeaveDaysTaken = paidLeaveUsed + unpaidLeaveDays;
+//     const presentOrLeaveDays = daysWithAttendance + totalLeaveDaysTaken;
+//     const absentDays = Math.max(workingDays - presentOrLeaveDays, 0);
+
+//     const policies = await LeavePolicy.find({
+//       employmentType: employee.employmentType,
+//     });
+//     const paidLeaveAllotted = policies
+//       .filter((p) => p.leaveType !== "Unpaid Leave")
+//       .reduce((sum, p) => sum + p.annualDays, 0);
+
+//     const yearStart = new Date(year, 0, 1);
+//     const yearToDateLeaves = await LeaveRequest.find({
+//       employee: employeeId,
+//       status: "approved",
+//       leaveType: { $ne: "Unpaid Leave" },
+//       fromDate: { $gte: yearStart, $lte: monthEnd },
+//     });
+
+//     const paidLeaveUsedYTD = yearToDateLeaves.reduce((sum, leave) => {
+//       const days = leave.isHalfDay
+//         ? 0.5
+//         : (new Date(leave.toDate) - new Date(leave.fromDate)) /
+//             (1000 * 60 * 60 * 24) +
+//           1;
+//       return sum + days;
+//     }, 0);
+
+//     const paidLeaveRemaining = paidLeaveAllotted - paidLeaveUsedYTD;
+
+//     const deductionDaysNeeded =
+//       absentDays + lateMarkDeductionDays + unpaidLeaveDays;
+//     const salaryDeductionDays =
+//       paidLeaveRemaining >= deductionDaysNeeded
+//         ? 0
+//         : deductionDaysNeeded - paidLeaveRemaining;
+
+//     const totalDeduction =
+//       Math.round(salaryDeductionDays * perDaySalary * 100) / 100;
+//     const netSalary =
+//       Math.round((employee.salary - totalDeduction) * 100) / 100;
+//     const paidDays = workingDays - salaryDeductionDays;
+//     const leaveBalanceCovered = Math.max(
+//       Math.min(paidLeaveRemaining, deductionDaysNeeded),
+//       0,
+//     );
+
+//     const payroll = await Payroll.create({
+//       employee: employeeId,
+//       month,
+//       year,
+//       grossSalary: employee.salary,
+//       workingDays,
+//       paidLeaveUsed,
+//       unpaidLeaveDays,
+//       absentDays,
+//       presentDays: daysWithAttendance,
+//       lateMarkDeductionDays,
+//       leaveBreakdown,
+//       paidDays,
+//       salaryDeductionDays,
+//       leaveBalanceCovered,
+//       totalDeduction,
+//       netSalary,
+//     });
+
+//     res.status(201).json(payroll);
+//   } catch (err) {
+//     res.status(500).json({ message: err.message });
+//   }
+// };
 const downloadSalarySlip = async (req, res) => {
   try {
     const payroll = await Payroll.findById(req.params.id).populate(

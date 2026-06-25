@@ -159,6 +159,7 @@ const runPayroll = async (req, res) => {
       paidLeaveUsed,
       unpaidLeaveDays,
       absentDays,
+      presentDays: daysWithAttendance,
       lateMarkDeductionDays,
       leaveBreakdown,
       paidDays,

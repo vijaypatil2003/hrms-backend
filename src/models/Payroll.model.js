@@ -15,6 +15,7 @@ const payrollSchema = new mongoose.Schema(
     paidLeaveUsed: { type: Number, default: 0 },
     unpaidLeaveDays: { type: Number, default: 0 },
     absentDays: { type: Number, default: 0 },
+    presentDays: { type: Number, default: 0 },
     lateMarkDeductionDays: { type: Number, default: 0 },
     leaveBreakdown: [
       {

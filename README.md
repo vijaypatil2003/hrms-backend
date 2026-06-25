@@ -46,6 +46,8 @@ Server runs on `http://localhost:5000`
 ## Live Deployment
 Backend deployed at: https://hrms-backend-4r4p.onrender.com
 
+Frontend deployed at: https://hrms-frontend-two-chi.vercel.app/
+
 ## Folder Structure
 ```
 src/

@@ -31,8 +31,7 @@ const getWorkingDays = async (month, year) => {
 
 const runPayroll = async (req, res) => {
   try {
-    console.log("NEW PAYROLL CODE RUNNING");
-    const { employeeId, month, year } = req.body;
+     const { employeeId, month, year } = req.body;
     if (!employeeId || !month || !year) {
       return res
         .status(400)
@@ -87,8 +86,7 @@ const runPayroll = async (req, res) => {
       fromDate: { $lte: monthEnd },
       toDate: { $gte: monthStart },
     });
-    console.log("approvedLeaves", approvedLeaves);
-
+ 
     let paidLeaveUsed = 0;
     let unpaidLeaveDays = 0;
     const leaveBreakdownMap = {};

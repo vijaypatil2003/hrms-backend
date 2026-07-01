@@ -1,8 +1,17 @@
 const User = require("../models/User.model");
 
 const generateEmployeeId = async () => {
-  const count = await User.countDocuments({ role: "employee" });
-  return "EMP" + String(count + 1).padStart(3, "0");
+  let employeeId;
+  let isUnique = false;
+
+  while (!isUnique) {
+    const count = await User.countDocuments({ role: "employee" });
+    employeeId = "EMP" + String(count + 1).padStart(3, "0");
+    const existing = await User.findOne({ employeeId });
+    if (!existing) isUnique = true;
+  }
+
+  return employeeId;
 };
 
 const createEmployee = async (req, res) => {

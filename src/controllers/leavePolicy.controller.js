@@ -4,11 +4,16 @@ const createLeavePolicy = async (req, res) => {
   try {
     const { employmentType, leaveType, annualDays } = req.body;
     if (!employmentType || !leaveType || annualDays === undefined) {
-      return res
-        .status(400)
-        .json({
-          message: "employmentType, leaveType and annualDays are required",
-        });
+      return res.status(400).json({
+        message: "employmentType, leaveType and annualDays are required",
+      });
+    }
+
+    const existing = await LeavePolicy.findOne({ employmentType, leaveType });
+    if (existing) {
+      return res.status(400).json({
+        message: `Leave policy for "${leaveType}" already exists for this employment type`,
+      });
     }
 
     const policy = await LeavePolicy.create({

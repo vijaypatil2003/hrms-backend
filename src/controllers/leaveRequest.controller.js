@@ -1,181 +1,56 @@
-const LeaveRequest = require("../models/LeaveRequest.model");
-const LeavePolicy = require("../models/LeavePolicy.model");
-const User = require("../models/User.model");
-
-const calculateLeaveDays = (fromDate, toDate, isHalfDay) => {
-  if (isHalfDay) return 0.5;
-  const from = new Date(fromDate);
-  const to = new Date(toDate);
-  const diffDays = (to - from) / (1000 * 60 * 60 * 24) + 1;
-  return diffDays;
-};
+const leaveService = require("../services/leave.service");
 
 const applyLeave = async (req, res) => {
   try {
-    const { leaveType, fromDate, toDate, isHalfDay, halfDaySession, reason } =
-      req.body;
-
-    if (!leaveType || !fromDate || !toDate) {
-      return res
-        .status(400)
-        .json({ message: "leaveType, fromDate and toDate are required" });
-    }
-
-    const days = isHalfDay
-      ? 0.5
-      : (new Date(toDate) - new Date(fromDate)) / (1000 * 60 * 60 * 24) + 1;
-
-    if (leaveType !== "Unpaid Leave") {
-      const user = await User.findById(req.user._id);
-      const policy = await LeavePolicy.find({
-        employmentType: user.employmentType,
-        leaveType,
-      });
-
-      const allotted = policy.reduce((sum, p) => sum + p.annualDays, 0);
-
-      const yearStart = new Date(new Date().getFullYear(), 0, 1);
-      const usedLeaves = await LeaveRequest.find({
-        employee: req.user._id,
-        leaveType,
-        status: "approved",
-        fromDate: { $gte: yearStart },
-      });
-
-      const used = usedLeaves.reduce(
-        (sum, l) =>
-          sum +
-          (l.manualDays ??
-            (l.isHalfDay
-              ? 0.5
-              : (new Date(l.toDate) - new Date(l.fromDate)) /
-                  (1000 * 60 * 60 * 24) +
-                1)),
-        0,
-      );
-
-      const remaining = allotted - used;
-
-      if (days > remaining) {
-        return res
-          .status(400)
-          .json({
-            message: `Insufficient leave balance. Remaining ${leaveType}: ${remaining} days`,
-          });
-      }
-    }
-
-    const leave = await LeaveRequest.create({
-      employee: req.user._id,
-      leaveType,
-      fromDate,
-      toDate,
-      isHalfDay,
-      halfDaySession: isHalfDay ? halfDaySession : null,
-      reason,
-    });
-
+    const leave = await leaveService.applyLeave(req.user._id, req.body);
     res.status(201).json(leave);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
 const getMyLeaves = async (req, res) => {
   try {
-    const leaves = await LeaveRequest.find({ employee: req.user._id }).sort({
-      createdAt: -1,
-    });
+    const leaves = await leaveService.getMyLeaves(req.user._id);
     res.json(leaves);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
 const getAllLeaves = async (req, res) => {
   try {
-    const { status, employee } = req.query;
-    const filter = {};
-    if (status) filter.status = status;
-    if (employee) filter.employee = employee;
-
-    const leaves = await LeaveRequest.find(filter)
-      .populate("employee", "name employeeId")
-      .sort({ createdAt: -1 });
+    const leaves = await leaveService.getAllLeaves(req.query);
     res.json(leaves);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
 const approveLeave = async (req, res) => {
   try {
-    const leave = await LeaveRequest.findById(req.params.id);
-    if (!leave) {
-      return res.status(404).json({ message: "Leave request not found" });
-    }
-    leave.status = "approved";
-    await leave.save();
+    const leave = await leaveService.approveLeave(req.params.id);
     res.json(leave);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
 const rejectLeave = async (req, res) => {
   try {
-    const leave = await LeaveRequest.findById(req.params.id);
-    if (!leave) {
-      return res.status(404).json({ message: "Leave request not found" });
-    }
-    leave.status = "rejected";
-    await leave.save();
+    const leave = await leaveService.rejectLeave(req.params.id);
     res.json(leave);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
 const getLeaveBalance = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    if (!user.employmentType) {
-      return res.json([]);
-    }
-
-    const policies = await LeavePolicy.find({
-      employmentType: user.employmentType,
-    });
-    const yearStart = new Date(new Date().getFullYear(), 0, 1);
-    const yearEnd = new Date(new Date().getFullYear(), 11, 31);
-
-    const approvedLeaves = await LeaveRequest.find({
-      employee: user._id,
-      status: "approved",
-      fromDate: { $gte: yearStart, $lte: yearEnd },
-    });
-
-    const balance = policies.map((policy) => {
-      const usedDays = approvedLeaves
-        .filter((leave) => leave.leaveType === policy.leaveType)
-        .reduce(
-          (sum, leave) =>
-            sum +
-            calculateLeaveDays(leave.fromDate, leave.toDate, leave.isHalfDay),
-          0,
-        );
-
-      return {
-        leaveType: policy.leaveType,
-        available: policy.annualDays,
-        used: usedDays,
-        remaining: policy.annualDays - usedDays,
-      };
-    });
-
+    const balance = await leaveService.getLeaveBalance(req.user._id);
     res.json(balance);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(err.statusCode || 500).json({ message: err.message });
   }
 };
 
@@ -187,3 +62,15 @@ module.exports = {
   rejectLeave,
   getLeaveBalance,
 };
+
+// TODO: one more error we can apply leave in past tooo >> it should  not allow to selct in FE and  BE
+// TODO: multiple time hit punchin button >> FIX FE and BE may be in FE after one click loder or somthiong
+
+// Date	Punches	Work Hours	Break (mins)	Late
+// 30/06/2026	
+// 22:44:35 - 22:46:22
+// 22:46:27 - 22:46:33
+// 22:46:36 - 22:46:44
+// 22:46:48 - -
+// 22:46:48 - 22:46:53
+// 0.03	0	Yes

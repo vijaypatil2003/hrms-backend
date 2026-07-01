@@ -68,6 +68,13 @@ const applyLeave = async (userId, payload) => {
 
   const days = calculateLeaveDays(fromDate, toDate, isHalfDay);
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (new Date(fromDate) < today) {
+    throw { statusCode: 400, message: "Cannot apply leave for a past date" };
+  }
+
   if (leaveType !== "Unpaid Leave") {
     const user = await User.findById(userId);
     await checkLeaveBalance(userId, user.employmentType, leaveType, days);

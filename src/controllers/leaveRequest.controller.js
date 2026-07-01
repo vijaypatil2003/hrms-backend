@@ -62,17 +62,3 @@ module.exports = {
   rejectLeave,
   getLeaveBalance,
 };
-
-
-
-// TODO: one more error we can apply leave in past tooo >> it should  not allow to selct in FE and  BE
-// TODO: multiple time hit punchin button >> FIX FE and BE may be in FE after one click loder or somthiong
-
-// Date	Punches	Work Hours	Break (mins)	Late
-// 30/06/2026	
-// 22:44:35 - 22:46:22
-// 22:46:27 - 22:46:33
-// 22:46:36 - 22:46:44
-// 22:46:48 - -
-// 22:46:48 - 22:46:53
-// 0.03	0	Yes
